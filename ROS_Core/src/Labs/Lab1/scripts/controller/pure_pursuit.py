@@ -9,6 +9,7 @@ from racecar_msgs.msg import ServoMsg
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseStamped
 
+
 class PurePursuitController():
     '''
     Main class for the controller
@@ -76,7 +77,9 @@ class PurePursuitController():
         #   - subscribes to the topic <self.control_topic>
         #   - has message type <ServoMsg> (racecar_msgs.msg.Odometry) 
         #   - with queue size 1
-        self.control_pub = None # TO BE FILLED
+        
+        self.control_pub = rospy.Publisher(self.control_topic, ServoMsg, queue_size=1)
+      
         ########################### END OF TODO 1#################################
         
             
@@ -84,8 +87,12 @@ class PurePursuitController():
         '''
         This function sets up the subscriber for the odometry and goal message
         '''
+        
         # This set up a subscriber for the goal you click on the rviz
         self.goal_sub = rospy.Subscriber('/move_base_simple/goal', PoseStamped, self.goal_callback, queue_size=1)
+        
+        # spin() simply keeps python from exiting until this node is stopped
+        rospy.spin()
         
         ################## TODO: 2. Set up a subscriber for the odometry message###################
         # Create a subscriber:
@@ -93,7 +100,16 @@ class PurePursuitController():
         #   - has message type <Odometry> (nav_msgs.msg.Odometry) 
         #   - with callback function <self.odometry_callback>, which has already been implemented
         #   - with queue size 1
+        # Define listener node
+        
+        # Subscribe the listener node to chatter topic
+        
+        self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odometry_callback, queue_size=1) 
+        rospy.loginfo("subscriber subscribed")
+
         ########################### END OF TODO 2#################################
+
+        
         
     def odometry_callback(self, odom_msg: Odometry):
         """
@@ -107,6 +123,7 @@ class PurePursuitController():
 
         # Add the current state to the buffer
         # Planning thread will read from the buffer
+        
         self.state_buffer.writeFromNonRT(state_cur)
 
     def goal_callback(self, goal_msg: PoseStamped):
@@ -122,9 +139,10 @@ class PurePursuitController():
         # 2. Retrieve the goal from the goal message 
         #   and create a 3-dim numpy array [x,y,1]
         # 3. add the goal to the buffer (self.goal_buffer)
-        
-        goal_x = np.nan # TO BE FILLED
-        goal_y = np.nan # TO BE FILLED
+        print(goal_msg.pose.position)
+        goal_x, goal_y, _ = goal_msg.pose.position.x, goal_msg.pose.position.y, goal_msg.pose.position.z
+        pose_array = np.array([goal_x, goal_y, 1])
+        self.goal_buffer.writeFromNonRT(pose_array)
         
         ########################### END OF TODO 3 #################################
         # Log the goal to the console using "rospy.loginfo"
@@ -141,7 +159,8 @@ class PurePursuitController():
         # If we are in simulation,
         # the throttle and steering angle are acceleration and steering angle
         if self.simulation:
-            throttle = accel
+            throttle = accel        #       rosmsg show racecar_msgs/ServoMsg
+
         else:
             # If we are using robot,
             # the throttle and steering angle needs to convert to PWM signal
@@ -154,7 +173,12 @@ class PurePursuitController():
         # 2. Set the header time to the current time
         # 3. Set the throttle and steering angle to the servo message
         # 4. Publish the servo message
-        
+        servo_msg = ServoMsg()
+        servo_msg.header.stamp = rospy.Time.now() # use the current time to avoid synchronization issue
+        servo_msg.throttle = throttle
+        servo_msg.steer = steer
+        self.control_pub.publish(servo_msg)
+      
         ########################### END OF TODO 4 #################################
 
     def planning_thread(self):
@@ -171,6 +195,7 @@ class PurePursuitController():
                 # read the current state and goal from the buffer
                 state_cur = self.state_buffer.readFromRT()
                 goal_cur = self.goal_buffer.readFromRT()
+                rospy.loginfo(f"state_buffer changed, loop triggered")
                 
                 # current longitudinal velocity
                 vel_cur = state_cur.v_long 
@@ -205,10 +230,33 @@ class PurePursuitController():
                     #
                     # 5. clip the steering angle between "-self.steer_max" and "self.steer_max"
                     # 6. apply the simple proportional controller for the acceleration to track the reference_velocity
+
+                    # if distance close enough, stop the car
                     
-                    accel = 0 # TO BE FILLED 
-                    steer = 0 # TO BE FILLED
+                    if (dis2goal <= self.stop_distance):
+                        accel = -1
+                        steer = 0
+                    #turn lol
+                    else:
+                        reference_velocity = np.min(self.vel_max, dis2goal-self.stop_distance)
+                        if (np.abs(alpha)> np.pi/2):
+                            reference_velocity = self.vel_max
+                            steer = self.steer_max
+                        
+                        else:
+                            k_dd = 1 # TUNE
+                            L = 1 # TUNE
+                            steer = np.atan((2*L*np.sin(alpha))/(k_dd * vel_cur))
+
+                        # clip the angle
+                            if (steer < -self.steer_max):
+                                steer = -self.steer_max
+                            elif (steer > self.steer_max):
+                                steer = self.steer_max
+                                
+                        accel = self.throttle_gain * (reference_velocity - vel_cur)
                     ########################### END OF TODO 5 ###########################################
                     
                     # publish the control
+                    print("publishing control ", accel, " ", steer)
                     self.publish_control(accel, steer, state_cur)
