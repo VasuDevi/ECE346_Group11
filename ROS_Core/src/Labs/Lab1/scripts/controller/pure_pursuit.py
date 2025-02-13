@@ -91,9 +91,6 @@ class PurePursuitController():
         # This set up a subscriber for the goal you click on the rviz
         self.goal_sub = rospy.Subscriber('/move_base_simple/goal', PoseStamped, self.goal_callback, queue_size=1)
         
-        # spin() simply keeps python from exiting until this node is stopped
-        rospy.spin()
-        
         ################## TODO: 2. Set up a subscriber for the odometry message###################
         # Create a subscriber:
         #   - subscribes to the topic <self.odom_topic>
@@ -195,7 +192,7 @@ class PurePursuitController():
                 # read the current state and goal from the buffer
                 state_cur = self.state_buffer.readFromRT()
                 goal_cur = self.goal_buffer.readFromRT()
-                rospy.loginfo(f"state_buffer changed, loop triggered")
+                
                 
                 # current longitudinal velocity
                 vel_cur = state_cur.v_long 
@@ -238,21 +235,21 @@ class PurePursuitController():
                         steer = 0
                     #turn lol
                     else:
-                        reference_velocity = np.min(self.vel_max, dis2goal-self.stop_distance)
+                        reference_velocity = np.min([self.max_vel, dis2goal-self.stop_distance])
                         if (np.abs(alpha)> np.pi/2):
-                            reference_velocity = self.vel_max
-                            steer = self.steer_max
+                            reference_velocity = self.max_vel
+                            steer = self.max_steer
                         
                         else:
                             k_dd = 1 # TUNE
-                            L = 1 # TUNE
-                            steer = np.atan((2*L*np.sin(alpha))/(k_dd * vel_cur))
+                            L = self.wheel_base # TUNE
+                            steer = np.arctan((2*L*np.sin(alpha))/(k_dd * vel_cur))
 
                         # clip the angle
-                            if (steer < -self.steer_max):
-                                steer = -self.steer_max
-                            elif (steer > self.steer_max):
-                                steer = self.steer_max
+                            if (steer < -self.max_steer):
+                                steer = -self.max_steer
+                            elif (steer > self.max_steer):
+                                steer = self.max_steer
                                 
                         accel = self.throttle_gain * (reference_velocity - vel_cur)
                     ########################### END OF TODO 5 ###########################################
