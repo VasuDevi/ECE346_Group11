@@ -230,6 +230,34 @@ class ILQR():
         #   R: np.ndarray, (dim_u, dim_u, T) hessian of cost function w.r.t. controls
         #   H: np.ndarray, (dim_x, dim_u, T) hessian of cost function w.r.t. states and controls
 		
+		# SOLUTION:
+		converged = False
+		for i in range(steps):
+			alpha = 1
+        	K_closed_loop, k_open_loop, reg = backward_pass(X, U, target, dt, SigmaX, SigmaY, reg)
+        	changed = False
+        	for _ in range(3) :
+            	X_new, U_new = roll_out(X, U, K_closed_loop, k_open_loop, alpha, dt)
+            	J_new, _ = calculate_cost(X_new, U_new, target, SigmaX, SigmaY)
+            	if J_new<=J:
+                	if np.abs(J - J_new) < 1e-3:
+                    	converged = True
+                	J = J_new
+                	X = X_new
+                	U = U_new
+                	changed = True
+                	break
+            	alpha *= 0.1
+        	if not changed:
+          		print("line search failed with reg = ", reg, " at step ", i)
+          		break
+        	if converged:
+          		print("converged after ", i, " steps.")
+          		break
+    	return X, U
+
+
+
 		########################### #END of TODO 1 #####################################
 
 		t_process = time.time() - t_start
