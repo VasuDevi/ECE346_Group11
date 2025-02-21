@@ -136,17 +136,22 @@ class ILQR():
 	def backward_pass(self, trajectory, controls, path_refs, obs_refs):
 		#TODO 1b#
 		q, r, Q, R, H = self.cost.get_derivatives_np(trajectory, controls, path_refs, obs_refs)
+
+
 		
 		A, B = self.dyn.get_jacobian_np(trajectory, controls)
 
-		T = X.shape[1]
+		T = trajectory.shape[1]
 
 		k_open_loop = np.zeros((2, T))
-		K_closed_loop = np.zeros((2, 4, T))
+		K_closed_loop = np.zeros((2, 5, T))
+
+	
 
 		p = q[:,T-1]
 		P = Q[:,:,T-1]
 		t = T-2
+		reg=1.0
 
 		while t >= 0:
 			Q_x = q[:,t] + A[:,:,t].T @ p
@@ -156,13 +161,15 @@ class ILQR():
 			Q_ux = H[:,:,t] + B[:,:,t].T @ P @ A[:,:,t]
 
         	# Add regularization
-			reg_matrix = reg*np.eye(4)
+			reg_matrix = reg*np.eye(5)
+			# print(((P+reg_matrix)).shape, "Other terms")
+			# print(H[:,:,t].shape, "H" )
 			Q_uu_reg = R[:,:,t] + B[:,:,t].T @ (P+reg_matrix) @ B[:,:,t]
 			Q_ux_reg = H[:,:,t] + B[:,:,t].T @ (P+reg_matrix) @ A[:,:,t]
 
         	# check if Q_uu_reg is PD
 			if not np.all(np.linalg.eigvals(Q_uu_reg) > 0) and reg < 1e5:
-				reg *= 5
+				reg *= self.reg_scale_up
 				t = T-2
 				p = q[:,T-1]
 				P = Q[:,:,T-1]
@@ -176,7 +183,9 @@ class ILQR():
 			K_closed_loop[:, :, t] = K
 
         	# Update value function derivative for the previous time step
+
 			p = Q_x + K.T @ Q_uu @ k + K.T@Q_u + Q_ux.T@k
+
 			P = Q_xx + K.T @ Q_uu @ K + K.T@Q_ux + Q_ux.T@K
 			t -= 1
 		reg = max(1e-5, reg*0.5)
@@ -194,9 +203,13 @@ class ILQR():
 		for t in range(T-1):
 			K = K_closed_loop[:,:,t]
 			k = k_open_loop[:,t]
-			U[:,t] = u_bar[:,t]+alpha*k+ K @ (X[:, t] - x_bar[:, t])
-			state_next, control_clip = self.dyn.integrate_forward_np(state, control)
-			X[:,t+1] = nonlinear_dynamics_step(X[:,t], U[:,t], dt)
+			error = X[:, t] - x_bar[:, t]
+			# Restrict angle 
+			while error[3] > np.pi: error[3] -= 2*np.pi
+			while error[3] < -np.pi: error[3] += 2*np.pi
+			U[:,t] = u_bar[:,t]+alpha*k+ K @ (error)
+			X[:,t+1], U[:,t]= self.dyn.integrate_forward_np(X[:,t], U[:,t])
+			
 		
 		return X, U
 		
@@ -308,10 +321,11 @@ class ILQR():
 			
 			K_closed_loop, k_open_loop, last_reg = self.backward_pass(trajectory, controls, path_refs, obs_refs)
 			changed = False
-			for j in range(self.alphas):
-				trajectory_new, controls_new = self.dyn.integrate_forward_np(trajectory, controls)
+			for j in range(len(self.alphas)):
+				trajectory_new, controls_new = self.forward_pass(trajectory, controls, K_closed_loop, k_open_loop, self.alphas[j])
 				J_new = self.cost.get_traj_cost(trajectory_new, controls_new, path_refs, obs_refs)
 				if J_new<=J:
+					print("shrinkage")
 					if np.abs(J - J_new) < self.tol:
 						converged = True
 					J = J_new
@@ -320,16 +334,13 @@ class ILQR():
 					path_refs, obs_refs = self.get_references(trajectory)
 					changed = True
 					break
-				alpha = self.alphas[j+1]
 			if not changed:
 				print("line search failed with reg = ", last_reg, " at step ", i)
 				break
 			if converged:
 				print("converged after ", i, " steps.")
 				break
-		
-		return {"status": 0, "t_process": time.time() - t_start, "trajectory": trajectory, "controls": controls, 
-		  "K_closed_loop": K_closed_loop, "k_open_loop": k_open_loop}
+
 
 
 
@@ -341,9 +352,9 @@ class ILQR():
 				t_process=t_process, # Time spent on planning
 				trajectory = trajectory,
 				controls = controls,
-				status=None, #	TODO: Fill this in
-				K_closed_loop=None, # TODO: Fill this in
-				k_open_loop=None # TODO: Fill this in
+				status=0, #	TODO: Fill this in
+				K_closed_loop=K_closed_loop, # TODO: Fill this in
+				k_open_loop=k_open_loop # TODO: Fill this in
 				# Optional TODO: Fill in other information you want to return
 		)
 		return solver_info
