@@ -245,6 +245,8 @@ class ILQR():
 		# Start timing
 		t_start = time.time()
 
+		print(init_state.shape)
+		print(controls.shape)
 		# Rolls out the nominal trajectory and gets the initial cost.
 		trajectory, controls = self.dyn.rollout_nominal_np(init_state, controls)
 
@@ -325,7 +327,7 @@ class ILQR():
 				trajectory_new, controls_new = self.forward_pass(trajectory, controls, K_closed_loop, k_open_loop, self.alphas[j])
 				J_new = self.cost.get_traj_cost(trajectory_new, controls_new, path_refs, obs_refs)
 				if J_new<=J:
-					print("shrinkage")
+					
 					if np.abs(J - J_new) < self.tol:
 						converged = True
 					J = J_new

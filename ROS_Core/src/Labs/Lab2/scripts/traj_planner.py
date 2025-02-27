@@ -219,7 +219,7 @@ class TrajectoryPlanner():
         accel = float((u_ref + K_closed_loop @ (x - x_ref))[0])
         steer_rate = float((u_ref + K_closed_loop @ (x - x_ref))[1])
         while steer_rate > np.pi: steer_rate -= 2*np.pi
-        while steer_rate < np.pi: steer_rate += 2*np.pi
+        while steer_rate < -np.pi: steer_rate += 2*np.pi
 
         ##### END OF TODO ##############
 
@@ -428,6 +428,7 @@ class TrajectoryPlanner():
             ###############################
             #### TODO: Task 3 #############
             ###############################
+            
 
             '''
             Implement the receding horizon planning thread
@@ -449,8 +450,26 @@ class TrajectoryPlanner():
                 - Create a new <Policy> object using your new plan
                 - Write the new policy to the policy buffer using <self.policy_buffer.writeFromNonRT>
                 - Publish the new policy for RVIZ visualization
-                    for example: self.trajectory_pub.publish(new_policy.to_msg())       
+                    for example: self.trajectory_pub.publish(new_policy.to_msg())   
+                    
             '''
+            if self.plan_state_buffer.new_data_available:
+                current_x = self.plan_state_buffer.readFromRT()
+                if np.abs(current_x[-1]- t_last_replan) > self.replan_dt:
+                    pol = self.policy_buffer.readFromRT()
+                    ctrl = None
+                    if pol is not None:
+                        ctrl = pol.get_ref_controls(current_x[-1])
+                    if self.path_buffer.new_data_available:
+                        path = self.path_buffer.readFromRT()
+                        self.planner.update_ref_path(path)
+                    plan_data = self.planner.plan(current_x[:-1], ctrl)
+                    if self.planner_ready and plan_data["status"] == 0:
+                        new_pol = Policy(plan_data["trajectory"], plan_data["controls"], plan_data["K_closed_loop"], current_x[-1], self.planner.dt, self.planner.T)
+                        self.policy_buffer.writeFromNonRT(new_pol)
+                        self.trajectory_pub.publish(new_pol.to_msg())
+                        t_last_replan = current_x[-1]
+
             ###############################
             #### END OF TODO #############
             ###############################
