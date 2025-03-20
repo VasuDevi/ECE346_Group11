@@ -33,10 +33,14 @@ class DynObstacle():
 
         self.frs = FRS()
 
+        
+
         ###############################################
         ############## TODO ###########################
         # 1. Create a subscriber to get <OdometryArray> message
         #    from the topic <self.dyn_obs_topic>
+
+        self.odom_sub = rospy.Subscriber(self.dyn_obs_topic, OdometryArray, self.odom_callback, queue_size = 10)
         #
         # 2. Inside the callback function, save <OdometryArray.odom_list> element
         #       (which is the list of dynamic obstacles' poses)
@@ -70,7 +74,20 @@ class DynObstacle():
         self.dy = 0 
         self.allow_lane_change = False
 
-        
+
+
+        def dyn_callback(config, level):
+            rospy.loginfo("""Reconfigure Request: {K_vx}, {K_vy},\ 
+                {K_y}, {dx}, {dy}, {allow_lane_change}""".format(**config))
+            print(config)
+            self.K_vx, self.K_vy, self.K_y, self.dx, self.dy, self.allow_lane_change = config['K_vx'], config['K_vy'], config['K_y'], config['dx'], config['dy'], config['allow_lane_change']
+            return config
+            
+
+
+
+        srv = Server(configConfig, dyn_callback)
+
         # Create a service server to calculate the FRS
         reset_srv = rospy.Service('/obstacles/get_frs', GetFRS, self.srv_cb)
 
@@ -88,6 +105,8 @@ class DynObstacle():
         # http://wiki.ros.org/ROS/Tutorials/WritingServiceClient%28python%29
         ###############################################
 
+
+
     def srv_cb(self, req):
         '''
         This function is a callback function of the service server
@@ -100,9 +119,17 @@ class DynObstacle():
                 respond.FRS.append(frs2setarray(frs))
         return respond
     
+    def odom_callback(self, msg):
+        """Save odometryArray inside dyn_obstacles list"""
+        
+        self.dyn_obstacles=msg.odom_list
+    
 if __name__ == '__main__':
     ##########################################
     #TODO: Initialize a ROS Node with a DynObstacle object
     ##########################################
+    rospy.init_node("dyn_obstacle_node", anonymous=True)
+    dynobs=DynObstacle()
+    rospy.spin()
     
     pass

@@ -30,6 +30,8 @@ class TrajectoryPlanner():
     '''
     Main class for the Receding Horizon trajectory planner
     '''
+    # Class variable (LAB3)
+    static_obstacle_dict = {}
 
     def __init__(self):
         # Indicate if the planner is used to generate a new trajectory
@@ -50,6 +52,11 @@ class TrajectoryPlanner():
 
         self.setup_service()
 
+        rospy.wait_for_service('/obstacles/get_frs')
+        
+        self.get_frs = rospy.ServiceProxy('/obstacles/get_frs', GetFRS)
+        
+
         # start planning and control thread
         threading.Thread(target=self.control_thread).start()
         if not self.receding_horizon:
@@ -69,6 +76,9 @@ class TrajectoryPlanner():
         # Read ROS topic names to subscribe 
         self.odom_topic = get_ros_param('~odom_topic', '/slam_pose')
         self.path_topic = get_ros_param('~path_topic', '/Routing/Path')
+
+        # Read ROS topic name for static obstacles (LAB3)!
+        self.static_obs_topic = get_ros_param('~static_obs_topic', '/Obstacles/Static')
         
         
         # Read ROS topic names to publish
@@ -118,12 +128,17 @@ class TrajectoryPlanner():
         # Publisher for the control command
         self.control_pub = rospy.Publisher(self.control_topic, ServoMsg, queue_size=1)
 
+        self.frs_pub = rospy.Publisher('/vis/FRS', MarkerArray, queue_size=10)
+
     def setup_subscriber(self):
         '''
         This function sets up the subscriber for the odometry and path
         '''
         self.pose_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odometry_callback, queue_size=10)
         self.path_sub = rospy.Subscriber(self.path_topic, PathMsg, self.path_callback, queue_size=10)
+
+        # setup static obj subscriber as well (LAB3)
+        self.static_obs_sub = rospy.Subscriber(self.static_obs_topic, MarkerArray, self.static_obstacle_callback, queue_size=10)
 
     def setup_service(self):
         '''
@@ -169,6 +184,19 @@ class TrajectoryPlanner():
         # Then it will be processed and add to the planner buffer 
         # inside the controller thread
         self.control_state_buffer.writeFromNonRT(odom_msg)
+    
+    def static_obstacle_callback(self, static_obs_msg):
+        '''
+        Subscriber callback function for static obstacle topic (LAB3)
+        '''
+        #reset dictionary
+        TrajectoryPlanner.static_obstacle_dict.clear()
+
+        #iterate through markers in markers[] in MarkerArray message type
+        for i in range(len(static_obs_msg.markers)):
+            id, vertices = get_obstacle_vertices(static_obs_msg.markers[i])
+            TrajectoryPlanner.static_obstacle_dict[id] = vertices
+
     
     def path_callback(self, path_msg):
         x = []
@@ -428,7 +456,6 @@ class TrajectoryPlanner():
             ###############################
             #### TODO: Task 3 #############
             ###############################
-            
 
             '''
             Implement the receding horizon planning thread
@@ -455,6 +482,21 @@ class TrajectoryPlanner():
             '''
             if self.plan_state_buffer.new_data_available:
                 current_x = self.plan_state_buffer.readFromRT()
+
+                # add static obstacles to ILQR Planner (LAB3)
+                obstacle_list = []
+                for vert in TrajectoryPlanner.static_obstacle_dict.values():
+                    obstacle_list.append(vert)
+                try:
+                    request = current_x[-1] + np.arange(self.planner.T) * self.planner.dt
+                    response = self.get_frs(request)
+                    obstacle_list.extend(frs_to_obstacle(response))
+                    self.frs_pub.publish(frs_to_msg(response))
+                except rospy.ServiceException as e:
+                    print("Service call failed: %n "%e)
+                
+                self.planner.update_obstacles(obstacle_list)
+
                 if np.abs(current_x[-1]- t_last_replan) > self.replan_dt:
                     pol = self.policy_buffer.readFromRT()
                     ctrl = None
