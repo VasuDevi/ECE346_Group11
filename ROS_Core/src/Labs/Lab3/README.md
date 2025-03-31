@@ -1,5 +1,5 @@
 # Lab 3 - Collision Avoidance and Navigation in Dynamic Environment (Forward Reachable Set)
-**[Due 11:59PM Thursday, March 6]**
+**[Due 11:59PM Thursday, March 20]**
 
 In this lab, we will dive deeper into our ILQR trajectory planner. Specifically, we will introduce its new capability to avoid static and dynamic obstacles. First, we will build upon your Lab 2's result and allow your robot to navigate around static obstacles. Then, we will integrate forward-reachable sets to enable your robot to interact with other robots through a traffic simulator, with other cars joining the traffic with your robot.
 
@@ -7,7 +7,7 @@ There are **3 tasks** in this lab, and you will need to submit (push) your code 
 
 **Note**: Make sure you have **pulled the code from upstream** into your repository and **updated all submodules**, i.e.,
 ```bash
-git pull upstream 2025 --recurse-submodules
+git pull upstream SP2025 --recurse-submodules
 ```
 
 # Getting Started #
@@ -47,6 +47,8 @@ Recall that in Lab 2, we have implemented a receding horizon planner inside [`Tr
 2. Subscribe to the topic from step 1, with message type [`MarkerArray`](http://docs.ros.org/en/noetic/api/visualization_msgs/html/msg/MarkerArray.html). This message contained a list of obstacles represented by a marker.
 
     Hint: You can use `rosmsg show visualization_msgs/MarkerArray` to inspect the data structure of `MarkerArray` message.
+    
+    Hint: The callback function for this subscriber is a new one that is defined in step 4. You can call it static_obstacle_callback
 
 3. Initialize an empty **dictionary** (let's call it `static_obstacle_dict`) as a [class variable](https://www.tutorialspoint.com/python/python_classes_objects.htm), i.e., a variable that is shared by all instances of a class (in this case, it is your `TrajectoryPlanner`).
 4. Create a callback function for the subscriber. Inside this callback function, we retrieve **id** and **vertices** for each obstacle using [`get_obstacle_vertices`](https://github.com/SafeRoboticsLab/ECE346/blob/SP2025/ROS_Core/src/Labs/Lab2/scripts/utils/static_obstacle.py#L5) helper function. Then, **add vertices to `static_obstacle_dict` whose key is the id of the obstacle**.
@@ -76,6 +78,8 @@ roslaunch racecar_planner lab3_task1.launch num_static_obs:=2
 ```
 The default parameter should be able to handle most static obstacles. If the robot is running off the corner, you will need to restart the simulation. If your robot is stuck and you have implemented a reset strategy in the optional Step 5, you can reset static obstacles using RQT ((**Figure 3**).
 
+**(Submission)Please record a video of the truck successfully avoiding the 2 obstacles.**
+
 ![Figure 3](assets/rqt_reset.png)
 
 ***Figure 3**: Reset static obstacles by 1) selecting `/simulation/reset_static_obstacle` from drop-down menu 2) entering numbers of static obstacles into the **service expression** 3) clicking the `Call` button to send the service.*
@@ -90,85 +94,44 @@ In addition to static obstacles, we must consider other agents as dynamic obstac
 
 ***Figure 4**: The evolution of the worst-case forward reachable set.*
 
-**FRS with Predicted Policy.** Worst-case reachability analysis often leads to overly conservative planning. Thodeus, if we can acquire information about other agents' behavior, it is useful to incorporate it into our planning algorithm.
-Suppose we have computed an estimate of another agent's control policy $\pi^o \colon X \to U^o$. (For example, we may have learned an estimate of the agent's preferences, expressed as a cost function and then computed an ILQR policy for this cost). We assume the uncertainty in other agent's behavior is well represented by an additive disturbance term $d^o_t$, i.e.,
-$\begin{equation}
-    x^0_{t+1} = f (x^o_t, \pi^o(x^o_t) + d^o_t
-\end{equation}$
+**FRS with Predicted Policy.** Worst-case reachability analysis often leads to overly conservative planning. Thus, if we can acquire information about other agents' behavior, it is useful to incorporate it into our planning algorithm.
+Suppose we have computed an estimate of another agent's control policy $\pi^o \colon X \to U^o$. (For example, we may have learned an estimate of the agent's preferences, expressed as a cost function and then computed an ILQR policy for this cost). We assume the uncertainty in other agent's behavior is well represented by an additive disturbance term $d^o_t$, i.e., 
+    $x^0_{t+1} = f (x^o_t, \pi^o(x^o_t)) + d^o_t$
 In this case, by avoiding FRSs at every time step within our planning horizon, the robot can safeguard against all possible disturbances.
 
 ## Linear System Approximation
 We can use a simplified dynamical model to describe the motion of other agents. Assuming the agent follows a reference path and maintains a constant velocity, its continuous state-space model is:
 
-$\begin{equation}\dot{X} = AX+Bu=
-    \begin{bmatrix}
-    \dot{\hat{x}} \\
-    \dot{\hat{y}} \\
-    \dot{v}_x \\
-    \dot{v}_y  \\
-    \dot{v}_{ref}
-    \end{bmatrix} = \begin{bmatrix}
-        0 & 0 & 1 & 0 & 0 \\
-        0 & 0 & 0 & 1 & 0 \\
-        0 & 0 & 0 & 0 & 0 \\
-        0 & 0 & 0 & 0 & 0
-    \end{bmatrix}
-    \begin{bmatrix}
-    {\hat{x}} {\hat{y}} \\ {v}_x \\ {v}_y \\ v_{ref}
-    \end{bmatrix} + \begin{bmatrix}
-        0 & 0 \\
-        0 & 0 \\
-        1 & 0 \\
-        0 & 1 \\
-        0 & 0 \\
-    \end{bmatrix}\begin{bmatrix}
-        a_x \\ a_y
-    \end{bmatrix}
-\end{equation}$
+![](assets/lab3StateModelEqn.svg)
 
 Where $\hat{x}$ and $\hat{y}$ are longitudinal and lateral position along the reference path, $v_x$ and $v_y$ are longitudinal and lateral velocity, $a_x$ and $a_y$ are longitudinal and lateral acceleration, and $v_{ref}$ is the reference longitudinal velocity. The agent applies a simple feedback control policy:
 
-$
-\begin{equation}
-    u = \begin{bmatrix}
-        a_x \\ 
-        a_y
-    \end{bmatrix}=\begin{bmatrix}
-        -K_{vx}(v_x-v_{ref})+d_x \\
-        -K_y \hat{y}-K_{vy}v_y+d_y
-    \end{bmatrix} = -\begin{bmatrix}
-        0 & 0 & K_{vx} & 0 & -K_{vx} \\
-        0 & K_y & 0 & K_y & 0 
-    \end{bmatrix}X + \begin{bmatrix}
-        d_x \\ 
-        d_y
-    \end{bmatrix}= -KX+d
-\end{equation}
-$
+![](assets/lab3ControlPolicy.svg)
+
 
  Putting **Equation 2** and **Equation 3** together, we have a new feedback control system as: 
- $
- \begin{equation}
-     \dot{X} = (A-BK)X+Bd
- \end{equation}
- $
+ $\dot{X}=(A-BK)X+Bd$
+
  Using this formulation, we can obtain the FRS of other agents in [Frenet coordinates](https://fjp.at/posts/optimal-frenet/#:~:text=to%20the%20controller.-,Frenet%20Coordinates,road%20or%20a%20reference%20path), which can be transformed into Cartesian coordinates easily. For example, the FRS with predicted policy can be seen in **Figure 5**. This forward reachable set does not over-grow as timestep increases because our feedback policy can stabilize the system despite the disturbance.
 
- ![20 Steps forward reachable sets with predictive policy projected to $\hat{x}-\hat{y}$ plane](assets/FRS.png)
+ ![20 Steps forward reachable sets with predictive policy projected to $\hat{x} - \hat{y}$ plane](assets/FRS.png)
 
-***Figure 5**: 20 Steps forward reachable sets with predictive policy projected to $\hat{x}-\hat{y}$ plane*
+***Figure 5**: 20 Steps forward reachable sets with predictive policy projected to* $\hat{x}$ - $\hat{y}$ *plane*
 
  ## Task 2: Multi-step Forward Reachable Set
  Inside the file `ROS_Core/src/Labs/Lab3/scripts/frs.py`, we have implemented the majority of functionalities to compute FRS in [`FRS`](https://github.com/SafeRoboticsLab/ECE346/blob/SP2025/ROS_Core/src/Labs/Lab3/scripts/frs.py) class. For example, given a set, $A$ and $B$ matrices to represent dynamics, bounds of control/disturbance, and time step $d_t$, [`onestep_zonotope_reachset`](https://github.com/SafeRoboticsLab/ECE346/blob/SP2025/ROS_Core/src/Labs/Lab3/scripts/quickzonoreach/zono.py#L17) function will calculate the FRS after $d_t$ seconds.
 
  You task is to finish [`multistep_zonotope_reachset`](https://github.com/SafeRoboticsLab/ECE346/blob/SP2025/ROS_Core/src/Labs/Lab3/scripts/frs.py#L10) function in the [`FRS`](https://github.com/SafeRoboticsLab/ECE346/blob/SP2025/ROS_Core/src/Labs/Lab3/scripts/frs.py) class following instructions. This function will calculate multiple-step reachable sets given an initial set.
 
- Finally, you can use [`ROS_Core/src/Labs/Lab3/scripts/task2.ipynb`](https://github.com/SafeRoboticsLab/ECE346/blob/SP2025/ROS_Core/src/Labs/Lab3/scripts/task2.ipynb) to reproduce **Figure 6**.
+ Finally, you can use [`ROS_Core/src/Labs/Lab3/scripts/task2.ipynb`](https://github.com/SafeRoboticsLab/ECE346/blob/SP2025/ROS_Core/src/Labs/Lab3/scripts/task2.ipynb) to reproduce **Figure 5**.
 
-![Example result of task 2](assets/task2.png)
-***Figure 6**: Example result of task 2*
+
 
 ## Task 3: Collision Avoidance with Dynamic Obstacles
+![Example result of task 2](assets/task2.png)
+***Figure 6**: Example result of task 3*
+
+
 In task 3, we will first create a new ROS node to host ROS Service Server that calculates the FRS. We will implement this node in [`ROS_Core/src/Labs/Lab3/scripts/dyn_obstacle_node.py`](https://github.com/SafeRoboticsLab/ECE346/blob/SP2025/ROS_Core/src/Labs/Lab3/scripts/dyn_obstacle_node.py) file. Specifically, we will:
 
 1. Create a subscriber to get poses of other agents;
@@ -215,7 +178,19 @@ roslaunch racecar_planner lab3_task2.launch
 ```
 If everything works properly, you will see your robot moving around the track and avoid collisions with other agents.
 
+Note: At different areas of the track (such as in the inner circle), your truck may swerve in either direction drastically to avoid the dynamic obstacle. This is completely normal behavior that is dictated by the costs of the obstacles in conjunction to the state and control cost. Therefore, tuning the costs of each is important in fixing these issues but is not expected of you until the final Lab.
+
+Note 2: The simulator, especially with the dynamic obstacle avoidance, can be finnicky; therefore multiple retry attempts may be needed to show the overtaking behavior. 
+
+**Important Note: If you want to go back to tasks 1 and 2, you must uncomment all of the code from task 3. If not your trajectory planner will try to call a node that does not exist and give an error.**
+
 You can also use RQT (**Figure 7**) to adjust FRS parameters, as described in the previous sections. What will happen if you increase $d_x$ and $d_y$ and set all $K$ terms to 0? **Please upload your observations (e.g., as a comment or separate document) in your final submission on Canvas**.
+
+**Submission:**
+
+1. Video of truck successfully avoiding 2 static obstacles and continuing its path
+2. Video of truck succcesfully overtaking or avoiding a dynamic truck once
+3. Document answering the above question about** $d_x$, $d_y$ and $K$
 
 ![You can use RQT to setup Dynamic Reconfigure Parameters for FRS](assets/rqt_dyn_obs.png)
 

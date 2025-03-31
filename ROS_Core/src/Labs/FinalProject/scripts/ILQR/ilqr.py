@@ -10,8 +10,6 @@ from .ref_path import RefPath
 from .config import Config
 import time
 
-import rospy
-
 status_lookup = ['Iteration Limit Exceed',
                 'Converged',
                 'Failed Line Search']
@@ -30,15 +28,12 @@ class ILQR():
 		jax.config.update('jax_platform_name', self.config.platform)
 		print('Jax using Platform: ', jax.lib.xla_bridge.get_backend().platform)
 
-		# If you want to use GPU, lower the memory fraction from 90% to avoid OOM.
-		os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '20'
-
 		self.dyn = Bicycle5D(self.config)
 		self.cost = Cost(self.config)
 		self.ref_path = None
 
 		# collision checker
-		# Note: This will not be used until lab3.
+		# Note: This will not be used until lab2.
 		self.collision_checker = CollisionChecker(self.config)
 		self.obstacle_list = []
 		
@@ -67,12 +62,12 @@ class ILQR():
 		print('Line Search Alphas: ', self.alphas)
 
 		# regularization parameters
-		self.reg_min = float(self.config.reg_min) # Minimum regularization value.
-		self.reg_max = float(self.config.reg_max) # Maximum regularization value.
-		self.reg_init = float(self.config.reg_init) # Initial regularization value.
-		self.reg_scale_up = float(self.config.reg_scale_up) # Increase factor (to multiply by) for regularization.
-		self.reg_scale_down = float(self.config.reg_scale_down) # Decrease factor (to divide by) for regularization.
-		self.max_attempt = self.config.max_attempt # Maximum number of attempts to increase regularization.
+		self.reg_min = float(self.config.reg_min)
+		self.reg_max = float(self.config.reg_max)
+		self.reg_init = float(self.config.reg_init)
+		self.reg_scale_up = float(self.config.reg_scale_up)
+		self.reg_scale_down = float(self.config.reg_scale_down)
+		self.max_attempt = self.config.max_attempt
 		
 	def warm_up(self):
 		'''
@@ -93,7 +88,7 @@ class ILQR():
 
 		x_init = np.array([0.0, -1.0, 1, 0, 0])
 		print('Start warm up ILQR...')
-		self.plan(x_init)
+		self.plan(x_init, verbose=False)
 		print('ILQR warm up finished.')
 		
 		self.ref_path = None
@@ -113,7 +108,7 @@ class ILQR():
 		Args:
 			vertices_list: list of np.ndarray: list of vertices for each obstacle.
 		'''
-		# Note: This will not be used until lab3.
+		# Note: This will not be used until lab2.
 		self.obstacle_list = []
 		for vertices in vertices_list:
 			self.obstacle_list.append(Obstacle(vertices))
@@ -131,90 +126,6 @@ class ILQR():
 		path_refs = self.ref_path.get_reference(trajectory[:2, :])
 		obs_refs = self.collision_checker.check_collisions(trajectory, self.obstacle_list)
 		return path_refs, obs_refs
-
-	#Helper functions pasted in
-	def backward_pass(self, trajectory, controls, path_refs, obs_refs):
-		#TODO 1b#
-		q, r, Q, R, H = self.cost.get_derivatives_np(trajectory, controls, path_refs, obs_refs)
-
-
-		
-		A, B = self.dyn.get_jacobian_np(trajectory, controls)
-
-		T = trajectory.shape[1]
-
-		k_open_loop = np.zeros((2, T))
-		K_closed_loop = np.zeros((2, 5, T))
-
-	
-
-		p = q[:,T-1]
-		P = Q[:,:,T-1]
-		t = T-2
-		reg=1.0
-
-		while t >= 0:
-			Q_x = q[:,t] + A[:,:,t].T @ p
-			Q_u = r[:,t] + B[:,:,t].T @ p
-			Q_xx = Q[:,:,t] + A[:,:,t].T @ P @ A[:,:,t]
-			Q_uu = R[:,:,t] + B[:,:,t].T @ P @ B[:,:,t]
-			Q_ux = H[:,:,t] + B[:,:,t].T @ P @ A[:,:,t]
-
-        	# Add regularization
-			reg_matrix = reg*np.eye(5)
-			# print(((P+reg_matrix)).shape, "Other terms")
-			# print(H[:,:,t].shape, "H" )
-			Q_uu_reg = R[:,:,t] + B[:,:,t].T @ (P+reg_matrix) @ B[:,:,t]
-			Q_ux_reg = H[:,:,t] + B[:,:,t].T @ (P+reg_matrix) @ A[:,:,t]
-
-        	# check if Q_uu_reg is PD
-			if not np.all(np.linalg.eigvals(Q_uu_reg) > 0) and reg < 1e5:
-				reg *= self.reg_scale_up
-				t = T-2
-				p = q[:,T-1]
-				P = Q[:,:,T-1]
-				continue
-			
-			Q_uu_reg_inv = np.linalg.inv(Q_uu_reg)
-        	# Calculate policy
-			k = -Q_uu_reg_inv@Q_u
-			K = -Q_uu_reg_inv@Q_ux_reg
-			k_open_loop[:,t] = k
-			K_closed_loop[:, :, t] = K
-
-        	# Update value function derivative for the previous time step
-
-			p = Q_x + K.T @ Q_uu @ k + K.T@Q_u + Q_ux.T@k
-
-			P = Q_xx + K.T @ Q_uu @ K + K.T@Q_ux + Q_ux.T@K
-			t -= 1
-		reg = max(1e-5, reg*0.5)
-		return K_closed_loop, k_open_loop, reg
-	
-	def forward_pass(self, x_bar, u_bar, K_closed_loop, k_open_loop, alpha):
-		#TODO 1c#
-
-		# you may also see this function referred to as roll_out(), e.g., in Google Colab #
-		X = np.zeros_like(x_bar)
-		U = np.zeros_like(u_bar)
-		
-		X[:,0] = x_bar[:,0]
-		T = x_bar.shape[1]
-		
-		for t in range(T-1):
-			K = K_closed_loop[:,:,t]
-			k = k_open_loop[:,t]
-			error = X[:, t] - x_bar[:, t]
-			# Restrict angle 
-			while error[3] > np.pi: error[3] -= 2*np.pi
-			while error[3] < -np.pi: error[3] += 2*np.pi
-			U[:,t] = u_bar[:,t]+alpha*k+ K @ (error)
-			X[:,t+1], U[:,t]= self.dyn.integrate_forward_np(X[:,t], U[:,t])
-			
-		
-		return X, U
-		
-
 
 	def plan(self, init_state: np.ndarray,
 				controls: Optional[np.ndarray] = None) -> Dict:
@@ -247,8 +158,6 @@ class ILQR():
 		# Start timing
 		t_start = time.time()
 
-		print(init_state.shape)
-		print(controls.shape)
 		# Rolls out the nominal trajectory and gets the initial cost.
 		trajectory, controls = self.dyn.rollout_nominal_np(init_state, controls)
 
@@ -278,8 +187,7 @@ class ILQR():
 		# 	B: np.ndarray, (dim_u, T) the Jacobian of the dynamics w.r.t. the control.
 		
 		# ******** Functions to roll the dynamics for one step  ************
-		# state_next, control_clipped = self.dyn.integrate_forward_np(state, control)
-		# NOTE: Make sure to use control_clipped in the forward pass.
+		# state_next, control_clip = self.dyn.integrate_forward_np(state, control)
 		
 		# Finds the next state of the vehicle given the current state and
 		# control input.
@@ -319,37 +227,6 @@ class ILQR():
         #   R: np.ndarray, (dim_u, dim_u, T) hessian of cost function w.r.t. controls
         #   H: np.ndarray, (dim_x, dim_u, T) hessian of cost function w.r.t. states and controls
 		
-		# SOLUTION:
-		converged = False
-		for i in range(self.max_iter):
-			alpha = self.alphas[0]
-			
-			K_closed_loop, k_open_loop, last_reg = self.backward_pass(trajectory, controls, path_refs, obs_refs)
-			changed = False
-			for j in range(len(self.alphas)):
-				trajectory_new, controls_new = self.forward_pass(trajectory, controls, K_closed_loop, k_open_loop, self.alphas[j])
-				J_new = self.cost.get_traj_cost(trajectory_new, controls_new, path_refs, obs_refs)
-				if J_new<=J:
-					
-					if np.abs(J - J_new) < self.tol:
-						converged = True
-					J = J_new
-					trajectory = trajectory_new
-					controls = controls_new
-					path_refs, obs_refs = self.get_references(trajectory)
-					changed = True
-					break
-			if not changed:
-				print("line search failed with reg = ", last_reg, " at step ", i)
-				break
-			if converged:
-				print("converged after ", i, " steps.")
-				break
-
-
-
-
-
 		########################### #END of TODO 1 #####################################
 
 		t_process = time.time() - t_start
@@ -357,9 +234,9 @@ class ILQR():
 				t_process=t_process, # Time spent on planning
 				trajectory = trajectory,
 				controls = controls,
-				status=0, #	TODO: Fill this in
-				K_closed_loop=K_closed_loop, # TODO: Fill this in
-				k_open_loop=k_open_loop # TODO: Fill this in
+				status=None, #	TODO: Fill this in
+				K_closed_loop=None, # TODO: Fill this in
+				k_open_loop=None # TODO: Fill this in
 				# Optional TODO: Fill in other information you want to return
 		)
 		return solver_info
