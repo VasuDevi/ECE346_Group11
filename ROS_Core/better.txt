@@ -1,0 +1,78 @@
+
+
+### TASK 1.2: Write value iteration and policy iteration
+def value_iteration(threshold = .001, mdp:MDP=None):
+    if mdp is None:
+        raise ValueError("MDP cannot be None")
+    numa, nums, R, P = mdp.get_mdp()
+    V_star = np.zeros(nums)
+    pi_star = np.zeros(nums)
+    ####
+    ## YOUR CODE HERE (TODO 1.2.1)
+    
+    while True:
+        V_update = np.zeros(nums)
+        V_update.fill(-np.inf)
+        # delta = 0
+        for s in range(nums):
+            for a in range(numa):
+                if V_update[s] < R[s,a] + mdp.gam * P[:,s,a] @ V_star:
+                     V_update[s] = R[s,a] + mdp.gam * P[:,s,a] @ V_star
+                     pi_star[s] = a
+
+        if np.linalg.norm(V_update - V_star) <= threshold:
+            break
+        V_star = V_update
+                
+    ####
+    return V_star, pi_star
+
+def policy_eval(policy, threshold = .001, mdp:MDP=None):
+    if mdp is None:
+        raise ValueError("MDP cannot be None")
+    numa, nums, R, P = mdp.get_mdp()
+    V = np.zeros(nums)
+
+    
+    ####
+    ## YOUR CODE HERE (TODO 1.2.2)
+    while True:
+        V_update = np.zeros(nums)
+        delta = 0
+        for s in range(nums):
+            a = policy[s]
+            V_update[s] = R[s][a] + mdp.gam * np.sum(P[:][s][a] * V_update[:])
+            delta = max(delta, np.abs(V_star[s] - V_update[s]))
+        V_star = V_update
+
+        if delta < threshold: break
+    ####
+    
+    return V
+
+def policy_iteration(threshold = .001, mdp:MDP=None):
+    if mdp is None:
+        raise ValueError("MDP cannot be None")
+    numa, nums, R, P = mdp.get_mdp()
+    # initialize a random policy with length nums and action randomly assigned from numa
+    pi_star = np.random.randint(0, numa, nums)
+    V_star = policy_eval(pi_star, mdp=mdp)
+
+    ####
+    ## YOUR CODE HERE (TODO 1.2.3)
+    while True:
+        for s in nums:
+            pi_update = np.argmax(R[s][:]+ P[:][s][:] @ V_star[:])
+
+        V_update = policy_eval(pi_update)
+        max_diff = np.max(np.abs(V_update - V_star))
+        V_star = V_update
+        pi_star = pi_update
+        if max_diff < threshold: break
+                
+
+
+
+    ####
+
+    return V_star, pi_star

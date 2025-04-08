@@ -10,7 +10,7 @@ from .ref_path import RefPath
 from .config import Config
 import time
 
-import rospy # For logging
+import rospy
 
 status_lookup = ['Iteration Limit Exceed',
                 'Converged',
@@ -131,18 +131,90 @@ class ILQR():
 		path_refs = self.ref_path.get_reference(trajectory[:2, :])
 		obs_refs = self.collision_checker.check_collisions(trajectory, self.obstacle_list)
 		return path_refs, obs_refs
-	
+
+	#Helper functions pasted in
 	def backward_pass(self, trajectory, controls, path_refs, obs_refs):
 		#TODO 1b#
-		return # K_closed_loop, k_open_loop, last_reg
+		q, r, Q, R, H = self.cost.get_derivatives_np(trajectory, controls, path_refs, obs_refs)
+
+
+		
+		A, B = self.dyn.get_jacobian_np(trajectory, controls)
+
+		T = trajectory.shape[1]
+
+		k_open_loop = np.zeros((2, T))
+		K_closed_loop = np.zeros((2, 5, T))
+
+	
+
+		p = q[:,T-1]
+		P = Q[:,:,T-1]
+		t = T-2
+		reg=1.0
+
+		while t >= 0:
+			Q_x = q[:,t] + A[:,:,t].T @ p
+			Q_u = r[:,t] + B[:,:,t].T @ p
+			Q_xx = Q[:,:,t] + A[:,:,t].T @ P @ A[:,:,t]
+			Q_uu = R[:,:,t] + B[:,:,t].T @ P @ B[:,:,t]
+			Q_ux = H[:,:,t] + B[:,:,t].T @ P @ A[:,:,t]
+
+        	# Add regularization
+			reg_matrix = reg*np.eye(5)
+			# print(((P+reg_matrix)).shape, "Other terms")
+			# print(H[:,:,t].shape, "H" )
+			Q_uu_reg = R[:,:,t] + B[:,:,t].T @ (P+reg_matrix) @ B[:,:,t]
+			Q_ux_reg = H[:,:,t] + B[:,:,t].T @ (P+reg_matrix) @ A[:,:,t]
+
+        	# check if Q_uu_reg is PD
+			if not np.all(np.linalg.eigvals(Q_uu_reg) > 0) and reg < 1e5:
+				reg *= self.reg_scale_up
+				t = T-2
+				p = q[:,T-1]
+				P = Q[:,:,T-1]
+				continue
+			
+			Q_uu_reg_inv = np.linalg.inv(Q_uu_reg)
+        	# Calculate policy
+			k = -Q_uu_reg_inv@Q_u
+			K = -Q_uu_reg_inv@Q_ux_reg
+			k_open_loop[:,t] = k
+			K_closed_loop[:, :, t] = K
+
+        	# Update value function derivative for the previous time step
+
+			p = Q_x + K.T @ Q_uu @ k + K.T@Q_u + Q_ux.T@k
+
+			P = Q_xx + K.T @ Q_uu @ K + K.T@Q_ux + Q_ux.T@K
+			t -= 1
+		reg = max(1e-5, reg*0.5)
+		return K_closed_loop, k_open_loop, reg
 	
 	def forward_pass(self, x_bar, u_bar, K_closed_loop, k_open_loop, alpha):
 		#TODO 1c#
-		# you may also see this function referred to as roll_out(), e.g., in Google Colab 
-		# Note: make sure that the difference in heading is between [-pi, pi]
-        # but make sure that the angle is still preserved (e.g. do something
-        # with np.mod() to make sure x_diff[3] is in the right range)
-		return # state, control_clipped
+
+		# you may also see this function referred to as roll_out(), e.g., in Google Colab #
+		X = np.zeros_like(x_bar)
+		U = np.zeros_like(u_bar)
+		
+		X[:,0] = x_bar[:,0]
+		T = x_bar.shape[1]
+		
+		for t in range(T-1):
+			K = K_closed_loop[:,:,t]
+			k = k_open_loop[:,t]
+			error = X[:, t] - x_bar[:, t]
+			# Restrict angle 
+			while error[3] > np.pi: error[3] -= 2*np.pi
+			while error[3] < -np.pi: error[3] += 2*np.pi
+			U[:,t] = u_bar[:,t]+alpha*k+ K @ (error)
+			X[:,t+1], U[:,t]= self.dyn.integrate_forward_np(X[:,t], U[:,t])
+			
+		
+		return X, U
+		
+
 
 	def plan(self, init_state: np.ndarray,
 				controls: Optional[np.ndarray] = None) -> Dict:
@@ -163,8 +235,7 @@ class ILQR():
 
 		# We first check if the planner is ready
 		if self.ref_path is None:
-			rospy.loginfo_once('No reference path is provided.')
-			# print('No reference path is provided.')
+			print('No reference path is provided.')
 			return dict(status=-1)
 
 		# if no initial control sequence is provided, we assume it is all zeros.
@@ -176,6 +247,8 @@ class ILQR():
 		# Start timing
 		t_start = time.time()
 
+		print(init_state.shape)
+		print(controls.shape)
 		# Rolls out the nominal trajectory and gets the initial cost.
 		trajectory, controls = self.dyn.rollout_nominal_np(init_state, controls)
 
@@ -187,16 +260,8 @@ class ILQR():
 		J = self.cost.get_traj_cost(trajectory, controls, path_refs, obs_refs)
 
 		##########################################################################
-		# TODO 1a: Implement the ILQR algorithm. Use the functions above, i.e., 
-		# backward_pass() and forward_pass(), and feel free to add any other helper functions.
-
-		# Use the instance variables from load_parameters() for your ILQR 
-		# implementation. For example, use self.tol as the convergence criterion,
-		# self.alphas as the line search parameter, etc. This is important
-		# because we may be updating these parameters in the .yaml file for 
-		# the final project.
-
-		# You will also find following implemented functions useful:
+		# TODO 1: Implement the ILQR algorithm. Feel free to add any helper functions.
+		# You will find following implemented functions useful:
 
 		# ******** Functions to compute the Jacobians of the dynamics  ************
 		# A, B = self.dyn.get_jacobian_np(trajectory, controls)
@@ -209,8 +274,8 @@ class ILQR():
 		# 	controls: np.ndarray, (dim_u, T) controls along the trajectory.
 
 		# Returns:
-		# 	A: np.ndarray, (dim_x, dim_x, T) the Jacobian of the dynamics w.r.t. the state.
-		# 	B: np.ndarray, (dim_u, dim_u, T) the Jacobian of the dynamics w.r.t. the control.
+		# 	A: np.ndarray, (dim_x, T) the Jacobian of the dynamics w.r.t. the state.
+		# 	B: np.ndarray, (dim_u, T) the Jacobian of the dynamics w.r.t. the control.
 		
 		# ******** Functions to roll the dynamics for one step  ************
 		# state_next, control_clipped = self.dyn.integrate_forward_np(state, control)
@@ -250,10 +315,41 @@ class ILQR():
 		# return:
 		# 	q: np.ndarray, (dim_x, T) jacobian of cost function w.r.t. states
         #   r: np.ndarray, (dim_u, T) jacobian of cost function w.r.t. controls
-        #   Q: np.ndarray, (dim_x, dim_x, T) hessian of cost function w.r.t. states
+        #   Q: np.ndarray, (dim_x, dim_u, T) hessian of cost function w.r.t. states
         #   R: np.ndarray, (dim_u, dim_u, T) hessian of cost function w.r.t. controls
         #   H: np.ndarray, (dim_x, dim_u, T) hessian of cost function w.r.t. states and controls
 		
+		# SOLUTION:
+		converged = False
+		for i in range(self.max_iter):
+			alpha = self.alphas[0]
+			
+			K_closed_loop, k_open_loop, last_reg = self.backward_pass(trajectory, controls, path_refs, obs_refs)
+			changed = False
+			for j in range(len(self.alphas)):
+				trajectory_new, controls_new = self.forward_pass(trajectory, controls, K_closed_loop, k_open_loop, self.alphas[j])
+				J_new = self.cost.get_traj_cost(trajectory_new, controls_new, path_refs, obs_refs)
+				if J_new<=J:
+					
+					if np.abs(J - J_new) < self.tol:
+						converged = True
+					J = J_new
+					trajectory = trajectory_new
+					controls = controls_new
+					path_refs, obs_refs = self.get_references(trajectory)
+					changed = True
+					break
+			if not changed:
+				print("line search failed with reg = ", last_reg, " at step ", i)
+				break
+			if converged:
+				print("converged after ", i, " steps.")
+				break
+
+
+
+
+
 		########################### #END of TODO 1 #####################################
 
 		t_process = time.time() - t_start
@@ -261,9 +357,9 @@ class ILQR():
 				t_process=t_process, # Time spent on planning
 				trajectory = trajectory,
 				controls = controls,
-				status=None, #	TODO: Fill this in
-				K_closed_loop=None, # TODO: Fill this in
-				k_open_loop=None # TODO: Fill this in
+				status=0, #	TODO: Fill this in
+				K_closed_loop=K_closed_loop, # TODO: Fill this in
+				k_open_loop=k_open_loop # TODO: Fill this in
 				# Optional TODO: Fill in other information you want to return
 		)
 		return solver_info
