@@ -287,13 +287,36 @@ class TrajectoryPlanner():
         goal_idx = self.goal_idx
         gL, _ = self.lanelet_map.get_closest_lanelet([self.goals[goal_idx][0], self.goals[goal_idx][1]])
 
+  
         # TODO: This code is a placeholder! Replace it with better obstacle avoidance code.
-        for waypoint in path_msg.poses:
-            x.append(waypoint.pose.position.x)
-            y.append(waypoint.pose.position.y)
-            width_L.append(waypoint.pose.orientation.x)
-            width_R.append(waypoint.pose.orientation.y)
-            speed_limit.append(waypoint.pose.orientation.z)
+        obs_id = [elements[2] for elements in obs_info] 
+        obs_pos = np.array([elements[0:2] for elements in obs_info])
+        for it in range(len(path_msg.poses)):
+            waypoint = path_msg.poses[it]
+            #distance checking for which obstacle we care about most (we play favorites)
+
+            path_pos = np.array(path_info[it][0:2])
+            path_id = path_info[it][2].id
+            closest_index = np.argmin(np.linalg.norm(obs_pos - path_pos))
+            if path_id == obs_id[closest_index]: #we are in the same lanelet as the closest obs
+                #switch leLaneLet
+                for neighbor_ids in path_info[it][2].left + path_info[it][2].right:
+                    if neighbor_ids not in obs_id:
+                        L,s  = self.lanelet_map.get_closest_lanelet(neighbor_ids)
+                        path_info[it][2:4] = L,s
+                        pos_x,pos_y,_ = L.center_line.get_ref_pose(s)
+                        path_info[it][0:2] = pos_x,pos_y
+                        switch = True
+                        break
+                if not switch: continue
+            
+            point_x, point_y = path_info[it][0], path_info[it][1]
+            x.append(point_x)
+            y.append(point_y)
+            lane_left, lane_right = path_info[it][2].left_boundary.distance_to_point(np.array([point_x, point_y])), path_info[it][2].right_boundary.distance_to_point(np.array([point_x, point_y]))
+            width_L.append(lane_left)
+            width_R.append(lane_right)
+            speed_limit.append(path_info[it][2].speed_limit)
 
         '''
         TODO (Task 1) End
