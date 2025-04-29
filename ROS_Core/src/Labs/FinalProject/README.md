@@ -16,12 +16,12 @@ To ensure your files are up to date, make sure to run:
 ```bash
 git pull upstream SP2025 --recurse-submodules
 ```
-
 To test that this works, run
 
 ```bash
 cd ROS_Core
 rm -rf build devel # delete old compiled files
+conda install pynput #needed for Keyboard Control
 catkin_make # recompile files (now including final_project pkg)
 source devel/setup.bash # source environment variables (now final_project is found!)
 roslaunch final_project task1_simulation.launch
@@ -47,11 +47,12 @@ cd ~/StartUp
 catkin_make_isolated
 ```
 
-To test that this works, you can put a static obstacle cube in front of the robot and run
+To test that this works, you can put a static obstacle cube in front of the robot
 
 ```bash
 roslaunch final_project task1_detection.launch
 ```
+Note: you have to run 2 terminals (one to start truck, and this one in laptop which *includes* visualization ;Thus the line above is the 2nd terminal where you run your algorithm.
 
 Once you start SLAM, a static obstacle should appear in real-time (and change position if you move it around). This should work with multiple static obstacles, assuming no occlusion.
 
