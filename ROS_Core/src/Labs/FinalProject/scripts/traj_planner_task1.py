@@ -50,7 +50,6 @@ class TrajectoryPlanner():
 
         #TASK 2: SF Flag
         self.safety_override = False
-        self.brake = False
 
         self.read_parameters()
 
@@ -65,8 +64,6 @@ class TrajectoryPlanner():
 
         # Manual input message from keyboard
         self.manual_msg = None
-        self.keyboard_throttle_pwm = 0
-        self.keyboard_steer_pwm = 0
 
         self.setup_publisher()
 
@@ -103,10 +100,10 @@ class TrajectoryPlanner():
         # Read the simulation flag,
         # if the flag is true, we are in simulation
         # and no need to convert the throttle and steering angle to PWM
-        self.simulation = get_ros_param('~simulation', False)
+        self.simulation = get_ros_param('~simulation', True)
 
         # Whether keyboard inputs are accepted
-        self.keyboard_enabled = get_ros_param('~keyboard_enabled', True)
+        self.keyboard_enabled = get_ros_param('~keyboard_enabled', False)
 
         # Read Planning parameters
         # if true, the planner will load a path from a file rather than subscribing to a path topic
@@ -121,22 +118,12 @@ class TrajectoryPlanner():
         else:
             self.ilqr_params_abs_path = os.path.join(self.package_path, ilqr_params_file)
 
-        manual_params_file = get_ros_param('~manual_params_file', '')
-        if manual_params_file == '':
-            self.manual_params_abs_path = None
-        elif os.path.isabs(manual_params_file):
-            self.manual_params_abs_path = manual_params_file
-        else:
-            self.manual_params_abs_path = os.path.join(self.package_path, manual_params_file)
-
-
     def setup_planner(self):
         '''
         This function setup the ILQR solver
         '''
         # Initialize ILQR solver
         self.planner = ILQR(self.ilqr_params_abs_path)
-        self.planner_manual = ILQR(self.manual_params_abs_path)
 
         # create buffers to handle multi-threading
         self.plan_state_buffer = RealtimeBuffer()
@@ -175,8 +162,8 @@ class TrajectoryPlanner():
         '''
         self.pose_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odometry_callback, queue_size=10)
 
-        # TODO (Task 2) - Write a corresponding publisher for the keyboard
-        self.keyboard_sub = rospy.Subscriber(self.keyboard_topic, ServoMsg, self.keyboard_callback, queue_size=10)
+        # # TODO (Task 2) - Write a corresponding publisher for the keyboard
+        # self.keyboard_sub = rospy.Subscriber(self.control_topic, ServoMsg, self.keyboard_callback, queue_size=10)
         
         self.path_sub = rospy.Subscriber(self.path_topic, PathMsg, self.path_callback, queue_size=10)
         self.static_obs_sub = rospy.Subscriber(self.static_obs_topic, MarkerArray, self.static_obstacle_callback, queue_size=10)
@@ -219,10 +206,7 @@ class TrajectoryPlanner():
     def keyboard_callback(self, manual_msg):
 
         self.keyboard_throttle_pwm = manual_msg.throttle
-        if(self.simulation):
-            self.keyboard_steer_pwm = manual_msg.steer
-        else:
-            self.keyboard_steer_pwm = -manual_msg.steer
+        self.keyboard_steer_pwm = manual_msg.steer
 
     def setup_service(self):
         '''
@@ -239,7 +223,6 @@ class TrajectoryPlanner():
         '''
         rospy.loginfo('Start planning!')
         self.planner_ready = True
-        self.planner_manual_ready = True
         return EmptyResponse()
 
     def stop_planning_cb(self, req):
@@ -248,7 +231,6 @@ class TrajectoryPlanner():
         '''
         rospy.loginfo('Stop planning!')
         self.planner_ready = False
-        self.planner_manual_ready = False
         self.policy_buffer.reset()
         return EmptyResponse()
 
@@ -314,33 +296,29 @@ class TrajectoryPlanner():
         # TODO: This code is a placeholder! Replace it with better obstacle avoidance code.
         obs_id = [elements[2] for elements in obs_info] 
         obs_pos = np.array([elements[0:2] for elements in obs_info])
-
-        #For Task 2 --> we overwrite obsPos!
-        #obs_pos = np.array([2.6, 2.6])
-
         for it in range(len(path_msg.poses)):
             waypoint = path_msg.poses[it]
             #distance checking for which obstacle we care about most (we play favorites)
 
             path_pos = np.array(path_info[it][0:2])
             path_id = path_info[it][2].id
-            closest_index = np.argmin(np.linalg.norm(np.expand_dims(obs_pos, axis=0) - np.expand_dims(path_pos,axis=0), axis=1))
+            closest_index = np.argmin(np.linalg.norm(obs_pos - path_pos, axis=1))
             
-            # if path_id == obs_id[closest_index]: #we are in the same lanelet as the closest obs
-            #     #switch leLaneLet
-            #     #print("switching code flag")
-            #     switch = False
-            #     for neighbor_ids in path_info[it][2].left + path_info[it][2].right:
-            #         # if neighbor_ids not in obs_id:
-            #         #print("found neighbor id: ", neighbor_ids)
-            #         L  = self.lanelet_map.get_lanelet(neighbor_ids)
-            #         s, _ = L.center_line.spline.projectPoint(path_pos)
-            #         #path_info[it][2] = L
-            #         pos_x,pos_y,_ = L.center_line.get_ref_pose(s)
-            #         path_info[it] = (pos_x,pos_y,L,s)
-            #         switch = True
-            #         break
-            #     if not switch: continue
+            if path_id == obs_id[closest_index]: #we are in the same lanelet as the closest obs
+                #switch leLaneLet
+                
+                switch = False
+                for neighbor_ids in path_info[it][2].left + path_info[it][2].right:
+                    # if neighbor_ids not in obs_id:
+                    
+                    L  = self.lanelet_map.get_lanelet(neighbor_ids)
+                    s, _ = L.center_line.spline.projectPoint(path_pos)
+                    #path_info[it][2] = L
+                    pos_x,pos_y,_ = L.center_line.get_ref_pose(s)
+                    path_info[it] = (pos_x,pos_y,L,s)
+                    switch = True
+                    break
+                if not switch: continue
             
             point_x, point_y = path_info[it][0], path_info[it][1]
             x.append(point_x)
@@ -351,7 +329,7 @@ class TrajectoryPlanner():
             speed_limit.append(path_info[it][2].speed_limit)
         
         #we now have new information - use gaussian filtering?
-        sigma = 2 #gaussian smoothing strength, on lists x,y defined above
+        sigma = 2.5 #gaussian smoothing strength, on lists x,y defined above
         x_arr = np.array(x)
         y_arr = np.array(y)
         x_gaussian = gaussian_filter1d(x_arr, sigma=sigma)
@@ -421,19 +399,19 @@ class TrajectoryPlanner():
         return accel, steer_rate
 
     
-    # def computeSafetyMargin(self, x,y, obs_pos):
-    #     point = np.array([x,y])
-    #     L, _ = self.lanelet_map.get_closest_lanelet(point)
+    def computeSafetyMargin(self, x,y, obs_pos):
+        point = np.array([x,y])
+        L, _ = self.lanelet_map.get_closest_lanelet(point)
 
-    #     #compute distance to l, r bound!
-    #     d_left = L.left_boundary.distance_to_point(point)
-    #     d_right = L.right_boundary.distance_to_point(point)
-    #     d_bound = np.min([d_left,d_right])
+        #compute distance to l, r bound!
+        d_left = L.left_boundary.distance_to_point(point)
+        d_right = L.right_boundary.distance_to_point(point)
+        d_bound = np.min([d_left,d_right])
 
         
-    #     d_obs = np.min(np.linalg.norm(obs_pos - point, axis=1))
+        d_obs = np.min(np.linalg.norm(obs_pos - point, axis=1))
          
-    #     return np.min([d_obs, d_bound])
+        return np.min([d_obs, d_bound])
 
     def control_thread(self):
         '''
@@ -483,7 +461,7 @@ class TrajectoryPlanner():
                 rx, ry = odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y
                 gSqDist = (rx - self.goals[self.goal_idx][0]) ** 2 + (ry - self.goals[self.goal_idx][1]) ** 2
                 if (gSqDist < 1.0):
-                    #print("found goal!")
+                    print("found goal!")
                     if self.goal_idx == 0:
                         rospy.sleep(2)
                     self.goal_idx = (self.goal_idx + 1) % (len(self.goals) - 1)
@@ -563,7 +541,7 @@ class TrajectoryPlanner():
                 # If we are using robot,
                 # the throttle and steering angle needs to convert to PWM signal
                 throttle_pwm, steer_pwm = self.pwm_converter.convert(accel, steer, state_cur[2])
-                # 1==1
+                
             else:
                 throttle_pwm = accel
                 steer_pwm = steer
@@ -573,18 +551,6 @@ class TrajectoryPlanner():
             servo_msg.header.stamp = rospy.get_rostime() # use the current time to avoid synchronization issue
             servo_msg.throttle = throttle_pwm
             servo_msg.steer = steer_pwm
-
-            if self.brake:
-                print("We are braking")
-                servo_msg.throttle = -3.0
-                servo_msg.steer = 0.0
-            elif not self.safety_override:
-                servo_msg.throttle = self.keyboard_throttle_pwm
-                servo_msg.steer = self.keyboard_steer_pwm
-            else:
-                #print("ilqr input, champ!")
-                pass
-
             self.control_pub.publish(servo_msg)
 
             # Record the control command and state for next iteration
@@ -639,10 +605,6 @@ class TrajectoryPlanner():
                     if self.path_buffer.new_data_available:
                         new_path = self.path_buffer.readFromRT()
                         self.planner.update_ref_path(new_path)
-                        self.planner_manual.update_ref_path(new_path)
-
-                    if self.planner.ref_path is None or len(self.planner.ref_path.center_line_data) == 0:
-                        continue
 
                     # Update the static obstacles
                     obstacles_list = []
@@ -650,127 +612,20 @@ class TrajectoryPlanner():
                         obstacles_list.append(vertices)
 
                     self.planner.update_obstacles(obstacles_list)
-                    self.planner_manual.update_obstacles(obstacles_list)
 
-                    # Helper code: Keep track of the coordinates and closest lanelet ID of each obstacle
-                    # obs_info follows the format:
-                    # (obstacle x coordinate, obstacle y coordinate, closest lanelet ID)
-                    obs_info = []
-                    for corners in self.static_obstacle_dict.values():
-                        # print("reading obstacles from dict")
-                        # Get the closest lanelet for this obstacle
-                        oL, _ = self.lanelet_map.get_closest_lanelet([np.mean(corners[:,0]), np.mean(corners[:,1])])
-                        obs_info.append((np.mean(corners[:,0]), np.mean(corners[:,1]), oL.id))
+                    # # Helper code: Keep track of the coordinates and closest lanelet ID of each obstacle
+                    # # obs_info follows the format:
+                    # # (obstacle x coordinate, obstacle y coordinate, closest lanelet ID)
+                    # obs_info = []
+                    # for corners in self.static_obstacle_dict.values():
+                    #     print("reading obstacles from dict")
+                    #     # Get the closest lanelet for this obstacle
+                    #     oL, _ = self.lanelet_map.get_closest_lanelet([np.mean(corners[:,0]), np.mean(corners[:,1])])
+                    #     obs_info.append((np.mean(corners[:,0]), np.mean(corners[:,1]), oL.id))
 
                     # Replan use ilqr
                     new_plan = self.planner.plan(state_cur[:-1], init_controls, verbose=False)
 
-                    # SAFETY FILTER STARTS
-
-                    # Get ILQR total cost (plan fxn returns dict)
-                    J_plan = np.inf
-                    if new_plan['status'] != -1:
-                        J_plan = new_plan['J']
-
-                    # Simulate 10 dynsteps of user command -- USING CRITIC PLANNER
-                    user_cost = 0.0
-                    x_pred = state_cur[:-1].copy()
-                    u_user = np.array([self.keyboard_throttle_pwm, self.keyboard_steer_pwm])
-                    traj = []
-                    cntrls_manual = []
-                    for i in range(10):
-                        x_pred = dyn_step(x_pred, u_user, self.planner_manual.dt)                  
-
-                    user_plan = self.planner_manual.plan(x_pred, init_controls, verbose = False)
-                    J_user = 9999
-                    if user_plan['status'] != -1:
-                        J_user = user_plan['J']
-                    else: print("couldnt find J_user")
-                       # user_cost += self.planner.cost(x_pred, u_user) # fix this!!!
-                    
-#    def get_traj_cost(
-# 			self, trajectory: Union[np.ndarray, ArrayImpl],
-#             controls: Union[np.ndarray, ArrayImpl],
-#             path_refs: Union[np.ndarray, ArrayImpl],
-#             obs_refs: list = None
-# 	) -> float:
-
-                    # User command unsafe
-                    # if user_cost > 10:
-                    #     rospy.loginfo("Manual command unsafe so checking ILQR fallback")
-
-                    #     if J_plan is not None and J_plan > 10:
-                    #         rospy.loginfo("ILQR cost too high so braking")
-                    #         brake_controls = np.zeros((self.planner.T, 2)) # T is horizon length
-                    #         brake_controls[:,0] = -3 # deccelerate
-                    #         # no feedback correction since just braking
-                    #         brake_K = np.zeros((self.planner.T, 2, 5)) # control dim 2, state dim 5
-                    #         policy = Policy(
-                    #             # Ref traj doesn't matter since we're not using feedback
-                    #             X = np.tile(state_cur[:-1], (self.planner.T,1)),
-                    #             U = brake_controls,
-                    #             K = brake_K,
-                    #             t0 = t_cur,
-                    #             dt = self.planner.dt,
-                    #             T = self.planner.T)
-
-                    #     else:
-                    #         rospy.loginfo("Using ILQR fallback")
-                    #         policy = Policy(
-                    #             X = new_plan['trajectory'],
-                    #             U = new_plan['controls'],
-                    #             K = new_plan['K_closed_loop'],
-                    #             t0 = t_cur,
-                    #             dt = self.planner.dt,
-                    #             T = self.planner.T)
-
-
-                    # # User command safe
-                    # else:
-                    #     rospy.loginfo("Manual command ok so letting user drive")
-                    #     # Hold same user command until next replan
-                    #     manual_controls = np.tile(u_user, (self.planner.T, 1))
-                    #     manual_K = np.zeros((self.planner.T, 2, 5))
-                    #     policy = Policy(
-                    #             # Ref traj doesn't matter since we're not using feedback
-                    #             X = np.tile(state_cur[:-1], (self.planner.T,1)),
-                    #             U = manual_controls,
-                    #             K = manual_K,
-                    #             t0 = t_cur,
-                    #             dt = self.planner.dt,
-                    #             T = self.planner.T)
-
-                        
-                    # self.policy_buffer.writeFromNonRT(policy)
-                    # self.trajectory_pub.publish(policy.to_msg())
-                    # t_last_replan = t_cur
-
-                    #SECOND ATTEMPT (USING FLAGS)
-                    # check if user cost too high!
-                    user_threshold = 800  #750 for sim. 800 for real
-                    plan_threshold = 2000 # 1000 #800 for sim, 2000 for real, was 3000 once upon a time?
-                    self.safety_override = False
-                    self.brake = False
-                    # USING J_plan!
-                    # print("J_user: ", J_user)
-                    if J_user > user_threshold:
-                        if J_plan > plan_threshold:
-                        #if J_user > plan_threshold:
-                            print("ilqr cost at brake: ", J_plan)
-                            self.brake = True
-                        else:
-                            self.safety_override = True
-                            self.brake = False
-                            #print("cost at override for J_user: ", J_user)
-                    else:
-                        self.safety_override = False
-                        self.brake = False
-
-                    # SAFETY FILTER ENDS
-
-
-
-                    #OLD STUFF
                     plan_status = new_plan['status']
                     if plan_status == -1:
                         rospy.logwarn_once('No path specified!')

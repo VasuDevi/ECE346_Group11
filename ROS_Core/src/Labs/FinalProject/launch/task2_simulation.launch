@@ -16,8 +16,9 @@
     <arg name="init_yaw"            default="0"                     doc="initial z position"/>
     <arg name="replan_dt"           default="0.1"                   doc="time step for replanning"/>
     <arg name="ilqr_config"         default="$(find final_project)/cfg/task2_ilqr.yaml"     doc="path to ilqr config file"/>
+    <arg name="ilqr_manual_config"  default="$(find final_project)/cfg/task2_ilqr_critic.yaml"    doc="path to ilqr manual costs config file"/>
     <arg name="num_dyn_obs"         default="0"                     doc="number of dynamic obsects"/>
-    <arg name="num_static_obs"      default="20"                     doc="number of static obsects"/>
+    <arg name="num_static_obs"      default="0"                     doc="number of static obsects"/>
     <arg name="static_obs_size"     default="0.2"                   doc="type of static obsects"/>
     <arg name="static_obs_topic"    default="/Obstacles/Static"     doc="ROS topic for static obstacles"/>
     <arg name="dyn_obs_topic"       default="/Obstacles/Dynamic"    doc="ROS topic for dynamic obstacles"/>
@@ -45,7 +46,7 @@
         <arg name="dyn_obs_topic"           value="$(arg dyn_obs_topic)"/>
     </include>
 
-    <node pkg="final_project" type="traj_planning_node.py" name="traj_planning" output="$(arg output)">
+    <node pkg="final_project" type="traj_planning_node_task2.py" name="traj_planning" output="$(arg output)">
         <param name="odom_topic"           value="$(arg odom_topic)" />
         <param name="control_topic"        value="$(arg control_topic)" />
         <param name="obstacle_topic"       value="$(arg obstacle_topic)" />
@@ -56,6 +57,7 @@
         <param name="receding_horizon"     value="$(arg receding_horizon)" />
         <param name="replan_dt"            value="$(arg replan_dt)" />
         <param name="ilqr_params_file"     value="$(arg ilqr_config)" />
+        <param name="manual_params_file"   value="$(arg ilqr_manual_config)" />
         <param name="PWM_model"            value="$(find final_project)/configs/mlp_model.sav" />
         <param name="obstacles_file"       value="$(arg obstacles)" />
         <param name="keyboard_enabled"     value="True" />

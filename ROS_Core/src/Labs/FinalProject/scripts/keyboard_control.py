@@ -42,7 +42,8 @@ class KeyboardControlNode:
         self.control_topic = rospy.get_param('~keyboard_topic', '/Keyboard')
 
         # TODO (Task 2): Create a publisher for the robot's velocity commands
-        # ...
+        self.keyboard_control_pub = rospy.Publisher(self.control_topic, ServoMsg, queue_size=10)
+
 
         self.throttle = 0.0
         self.steering = 0.0
@@ -72,6 +73,7 @@ class KeyboardControlNode:
         Args:
             key (keyboard.Key): The key that was pressed.
         """
+        
         if key == keyboard.Key.up:
             self.up = True
         elif key == keyboard.Key.down:
@@ -96,6 +98,9 @@ class KeyboardControlNode:
             self.left = False
         elif key == keyboard.Key.right:
             self.right = False
+        
+        self.throttle = 0
+        self.steering = 0
 
     def run(self):
         """
@@ -106,6 +111,8 @@ class KeyboardControlNode:
             # Set the header time to the current time
             servo_msg.header.stamp = rospy.Time.now()
             # Set the throttle and steering angle
+
+ 
 
             if self.up:
                 self.throttle = min(self.throttle + self.accel_rate, self.max_throttle)
@@ -130,6 +137,8 @@ class KeyboardControlNode:
             
             # TODO (Task 2): Publish the servo message
             # ...
+           
+            self.keyboard_control_pub.publish(servo_msg)
 
             self.rate.sleep()
 

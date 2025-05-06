@@ -46,7 +46,7 @@ delta_max: 0.65 # maximum steering angle
 delta_min: -0.65 # minimum steering angle
 
 # velocity limits
-v_max: .7 # 1.25 # maximum velocity
+v_max: 1.25 # maximum velocity
 v_min: 0.0 # minimum velocity
 
 # turn rate limits
@@ -58,7 +58,7 @@ a_max: 3 # maximum acceleration
 a_min: -5.0 # minimum acceleration
 
 # reference velocity
-v_ref: 0.2 # 0.8 # reference velocity
+v_ref: .8 # reference velocity
 ####################################################
 ########## Parameters for ILQR COST ################
 ####################################################
@@ -70,7 +70,7 @@ dim_closest_pt_x: 0 # dimension of closest point x in the reference
 dim_closest_pt_y: 1 # dimension of closest point y in the reference
 dim_path_slope: 2 # dimension of path slope in the reference
 path_cost_type: 'quadratic' # 'quadratic' or 'huber'
-path_weight: 6.0 # 12.0 # weight for the path deviation cost
+path_weight: 12.0 # weight for the path deviation cost
 path_huber_delta: 2 # huber loss delta for path deviation cost
 
 # Velocity Cost
@@ -85,7 +85,7 @@ vel_limit_b: 1.0 # parameter for ExpLinear Cost
 
 # Heading Cost
 heading_cost_type: 'quadratic' # 'quadratic' or 'huber'
-heading_weight: 12.0 # weight for the heading cost
+heading_weight: 1 # weight for the heading cost
 heading_huber_delta: 1 # huber loss delta for heading cost
 
 # Lateral Acceleration Cost
@@ -101,17 +101,17 @@ progress_weight: 0  # weight for the progress cost
 # Lane Boundary Cost
 dim_right_boundary: 5 # dimension of lane boundary in the reference
 dim_left_boundary: 6 # dimension of lane boundary in the reference
-lane_boundary_a: 180 # # 180 parameter for lane boundary cost
-lane_boundary_b: 6 # 6 # parameter for ExpLinear Cost
+lane_boundary_a: 100.0 # parameter for lane boundary cost
+lane_boundary_b: 1.5 # parameter for ExpLinear Cost
 
 ########        Control Cost          ############
 ctrl_cost_type: 'quadratic' # 'quadratic' or 'huber'
 # those value should not be too small
-ctrl_cost_accel_weight: 2
+ctrl_cost_accel_weight: 1
 ctrl_cost_steer_weight: 0.5
 ctrl_cost_accel_huber_delta: 1.0 # huber loss delta
 ctrl_cost_steer_huber_delta: 0.5 # huber loss delta
 
 ########        Obstacle Cost          ############
-obs_a: 0 # parameter for obstacle cost
-obs_b: 0 # parameter for ExpLinear Cost
+obs_a: 10.0 # parameter for obstacle cost
+obs_b: 0.5 # parameter for ExpLinear Cost

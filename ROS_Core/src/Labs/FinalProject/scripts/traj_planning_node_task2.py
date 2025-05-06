@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 import rospy
 from std_msgs.msg import String
-from traj_planner_task1 import TrajectoryPlanner
+from traj_planner import TrajectoryPlanner
 import sys, os
 
 
 
 
 if __name__ == '__main__':
-    rospy.init_node('traj_planning_node')
+    rospy.init_node('traj_planning_node_task2')
     rospy.loginfo("Start trajectory planning node")
 
     planner = TrajectoryPlanner()
